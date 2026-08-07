@@ -214,9 +214,13 @@ static void mirror_pump(uint32_t now) {
 			              ui_fmt1(b5, (int)(latest.vbat_mv / 100)), ui_alarm_level());
 			mirror_row++;
 		} else {
-			serial_printf(&console_tx, "co raw %u range %u frames %u cksum %u resync %u age %u\e[J",
-			              ps1.ppm_x10, ps1.range86, (unsigned)ps1.frames,
-			              (unsigned)ps1.cksum_errs, (unsigned)ps1.resyncs, (unsigned)ps1.age_s);
+			serial_printf(&console_tx,
+			              "co ppmf %u mgf %u range %u [%02x %02x %02x %02x %02x %02x %02x %02x %02x] "
+			              "frames %u cksum %u age %u\e[J",
+			              ps1.ppm_x10, ps1.mgm3, ps1.range86, ps1.last[0], ps1.last[1],
+			              ps1.last[2], ps1.last[3], ps1.last[4], ps1.last[5], ps1.last[6],
+			              ps1.last[7], ps1.last[8], (unsigned)ps1.frames,
+			              (unsigned)ps1.cksum_errs, (unsigned)ps1.age_s);
 			mirror_row = -1;
 		}
 	}

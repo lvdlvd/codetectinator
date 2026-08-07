@@ -60,9 +60,14 @@ void ps1co_feed(struct PS1CO *p, const uint8_t *buf, size_t n) {
 		}
 		// 0x86: bytes 6..7: concentration in the module's configured display
 		// unit, big-endian, 0.1 ppm steps; bytes 4..5: the full-range field
-		// in the same unit (1000 = 100.0 ppm — the live scale cross-check)
+		// in the same unit (1000 = 100.0 ppm — the live scale cross-check);
+		// bytes 2..3: mass concentration (mg/m3-ish, see header)
 		p->ppm_x10 = (uint16_t)((p->frame[6] << 8) | p->frame[7]);
+		p->mgm3 = (uint16_t)((p->frame[2] << 8) | p->frame[3]);
 		p->range86 = (uint16_t)((p->frame[4] << 8) | p->frame[5]);
+		for (int i = 0; i < 9; i++) {
+			p->last[i] = p->frame[i];
+		}
 		p->valid = true;
 		p->age_s = 0;
 		p->frames++;

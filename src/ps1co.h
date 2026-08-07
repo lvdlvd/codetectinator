@@ -28,9 +28,13 @@ struct PS1CO {
 	int idx;
 
 	// last good reading
-	uint16_t ppm_x10; // CO concentration, 0.1 ppm units
-	uint16_t range86; // full-range field of the same reply: 1000 = 100.0 ppm
-	                  // confirms the 0.1 ppm scale on every frame
+	uint16_t ppm_x10; // CO concentration field (bytes 6..7), 0.1 ppm units
+	uint16_t mgm3;    // the mass-concentration field (bytes 2..3), unit per
+	                  // the module's config — the ppm/mg ratio (CO: 1 ppm =
+	                  // 1.145 mg/m3 at 25 C) discriminates the scale
+	uint16_t range86; // full-range field (bytes 4..5): 1000 = 100.0 ppm if
+	                  // the 0.1 ppm interpretation holds
+	uint8_t last[9];  // the raw frame, for eyeballing on the bench
 	bool valid;       // at least one good frame seen
 	uint32_t age_s;   // seconds since the last good frame (caller-bumped)
 
