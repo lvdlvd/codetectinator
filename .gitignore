@@ -1,0 +1,16 @@
+# narray-generated (make regenerates; board.h is the copied board selection)
+src/device.h
+src/pinmux.h
+src/devs.ld
+src/STM32*_ROM.ld
+src/board.h
+# build outputs
+src/*.o
+src/*.elf
+src/*.bin
+src/*.hex
+src/*.map
+src/bme280_comp_test
+# pdftotext extracts (regenerable from the PDFs)
+doc/*.txt
+src/bme280_comp_test.dSYM/
