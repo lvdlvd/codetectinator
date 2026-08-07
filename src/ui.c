@@ -17,27 +17,38 @@ enum PowerState { PWR_BRIGHT, PWR_DIM, PWR_OFF };
 static const int16_t co_thresh[3] = {100, 300, 700};
 enum { CO_HYST = 5 };
 
+// Battery alarm: below 6.5 V the 9V block is near the buck's dropout; only
+// meaningful with a real battery attached — under 4.5 V the divider is
+// unwired (USB bench power) and the pin reads noise. Acknowledgeable by
+// button, unlike the CO alarm; CO always outranks it.
+enum { BAT_LOW_MV = 6500, BAT_RELEASE_MV = 6800, BAT_SENSE_MIN_MV = 4500 };
+
 static struct SSD1306 *disp;
-static struct UIData cur = {HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, 0};
-static int tab;   // 0 P, 1 T, 2 H, 3 CO
-static int alarm; // 0..3
+static struct UIData cur = {HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, 0};
+static int tab;   // BAT P T H CO; ui_init boots it on CO, the raison d'etre
+static int alarm; // CO alarm, 0..3
+static bool bat_alarm, bat_ack;
 static enum PowerState pwr;
 static uint32_t last_activity_ms;
 static uint32_t last_render_ms;
 static bool inverted; // alarm blink phase
 
-// per-tab presentation: history channel and display divider (history units
-// per displayed 0.1-unit; T is stored in 0.01 degC but shown with 1 decimal)
+// per-tab presentation: history channel, display divider (history units per
+// displayed 0.1-unit; T and BAT store two decimals but show one), and the
+// unit label drawn small beside the big value
 static const struct {
 	const char *name;
+	const char *unit;
 	int ch;
 	int div;
-} tabs[4] = {
-    {"hPa", HIST_P, 1},
-    {"\'C", HIST_T, 10}, // 5x7 has no degree sign; ' reads well enough
-    {"%RH", HIST_H, 1},
-    {"ppmCO", HIST_CO, 1},
+} tabs[] = {
+    {"BAT", "V", HIST_BAT, 10},
+    {"P", "hPa", HIST_P, 1},
+    {"T", "\'C", HIST_T, 10}, // 5x7 has no degree sign; ' reads well enough
+    {"H", "%RH", HIST_H, 1},
+    {"CO", "ppm", HIST_CO, 1}, // rightmost: the startup tab
 };
+enum { NTABS = sizeof tabs / sizeof tabs[0] };
 
 int ui_alarm_level(void) { return alarm; }
 
@@ -65,34 +76,46 @@ char *ui_fmt1(char *buf, int v) {
 
 // ---- screens ---------------------------------------------------------------
 
-// Nonlinear time scale: column x (0 = oldest, 127 = now) covers sample ages
-// [edge(x+1), edge(x)) seconds where edge(k) = 900 * ((128-k)/128)^2 — the
-// right half of the graph spans the last ~3.7 minutes, the left half the
-// remaining ~11. edge(0) = 900, edge(128) = 0.
-static int age_edge(int k) { return (HIST_LEN * (128 - k) * (128 - k)) >> 14; }
+// Graph geometry: the min/max labels sit LEFT of the plot, max in the top
+// half-height, min in the bottom. Nonlinear time scale over the plot width:
+// column k (0 = oldest, G_W-1 = now) covers ages [edge(k+1), edge(k)) with
+// edge(k) = HIST_LEN * ((G_W-k)/G_W)^2 — the right half spans the last ~3.7
+// minutes, the left half the remaining ~11.
+enum { G_X0 = 32, G_W = SSD1306_W - G_X0, G_TOP = 34, G_BOT = 60 };
 
-enum { G_TOP = 34, G_BOT = 53 }; // graph pixel rows (below the 21px big value)
+static int age_edge(int k) { return HIST_LEN * (G_W - k) * (G_W - k) / (G_W * G_W); }
 
 static void render_tab(void) {
 	char buf[8];
 
-	// tab bar: four 32px cells, current one inverted
-	for (int i = 0; i < 4; i++) {
+	// tab bar: NTABS equal cells, current one inverted
+	for (int i = 0; i < NTABS; i++) {
+		int x0 = i * SSD1306_W / NTABS, x1 = (i + 1) * SSD1306_W / NTABS - 1;
 		int w = fb_text_width(1, tabs[i].name);
-		fb_text(disp, i * 32 + (32 - w) / 2, 1, 1, tabs[i].name);
+		fb_text(disp, x0 + (x1 - x0 + 1 - w) / 2, 1, 1, tabs[i].name);
 	}
-	fb_invert_rect(disp, tab * 32, 0, tab * 32 + 31, 8);
+	fb_invert_rect(disp, tab * SSD1306_W / NTABS, 0, (tab + 1) * SSD1306_W / NTABS - 1, 8);
 
-	int16_t v[4] = {cur.p, cur.t, cur.h, cur.co};
+	int16_t v[NTABS] = {cur.bat, cur.p, cur.t, cur.h, cur.co};
 	int16_t val = v[tab];
 	int dv = tabs[tab].div;
 
-	// current value, large (Scale3x-smoothed)
+	// current value large (Scale3x), unit small at its lower right — the
+	// value+unit group centered as a whole
 	if (val == HIST_NONE) {
-		fb_text_big(disp, (SSD1306_W - fb_text_big_width("--")) / 2, 11, "--");
+		ui_fmt1(buf, 0);
+		buf[0] = '-', buf[1] = '-', buf[2] = 0;
 	} else {
 		ui_fmt1(buf, val / dv);
-		fb_text_big(disp, (SSD1306_W - fb_text_big_width(buf)) / 2, 11, buf);
+	}
+	{
+		int wv = fb_text_big_width(buf), wu = fb_text_width(1, tabs[tab].unit);
+		int x0 = (SSD1306_W - (wv + 3 + wu)) / 2;
+		if (x0 < 0) {
+			x0 = 0;
+		}
+		int xe = fb_text_big(disp, x0, 11, buf);
+		fb_text(disp, xe + 3, 11 + 21 - 7, 1, tabs[tab].unit); // baseline-aligned
 	}
 
 	// graph: y scale from the full-window min/max, padded; flat lines centered
@@ -104,9 +127,9 @@ static void render_tab(void) {
 			whi = wlo + 8;
 			span = 8;
 		}
-		for (int x = 0; x < SSD1306_W; x++) {
-			int a_hi = age_edge(x);     // older edge
-			int a_lo = age_edge(x + 1); // newer edge
+		for (int k = 0; k < G_W; k++) {
+			int a_hi = age_edge(k);     // older edge
+			int a_lo = age_edge(k + 1); // newer edge
 			if (a_hi == a_lo) {
 				a_hi = a_lo + 1; // rightmost columns: at least one sample wide
 			}
@@ -116,26 +139,17 @@ static void render_tab(void) {
 			}
 			int y0 = G_BOT - (hi - wlo) * (G_BOT - G_TOP) / span;
 			int y1 = G_BOT - (lo - wlo) * (G_BOT - G_TOP) / span;
-			fb_vline(disp, x, y0, y1);
+			fb_vline(disp, G_X0 + k, y0, y1);
 		}
-		// time ticks at 15/5/1 minutes: x = 128 - 128*sqrt(age/900)
-		fb_vline(disp, 0, G_BOT + 1, G_BOT + 2);
-		fb_vline(disp, 54, G_BOT + 1, G_BOT + 2);
-		fb_vline(disp, 95, G_BOT + 1, G_BOT + 2);
+		// time ticks at 15/5/1 minutes: k = G_W - G_W*sqrt(age/900)
+		fb_vline(disp, G_X0, G_BOT + 1, G_BOT + 2);
+		fb_vline(disp, G_X0 + 41, G_BOT + 1, G_BOT + 2);
+		fb_vline(disp, G_X0 + 71, G_BOT + 1, G_BOT + 2);
 
-		// min/max annotation line
-		int x = fb_text(disp, 0, 57, 1, "^");
-		x = fb_text(disp, x, 57, 1, ui_fmt1(buf, whi / dv));
-		x = fb_text(disp, x + 4, 57, 1, "v");
-		fb_text(disp, x, 57, 1, ui_fmt1(buf, wlo / dv));
-	}
-
-	// battery, right-aligned on the bottom line (in volts, one decimal)
-	if (cur.vbat_mv) {
-		ui_fmt1(buf, (int)(cur.vbat_mv / 100));
-		int w = fb_text_width(1, buf) + 6;
-		int x = fb_text(disp, SSD1306_W - w, 57, 1, buf);
-		fb_text(disp, x, 57, 1, "V");
+		// min/max labels left of the plot: max in the top half, min in the
+		// bottom half of the graph's height
+		fb_text(disp, 0, G_TOP + (G_BOT - G_TOP) / 4 - 3, 1, ui_fmt1(buf, whi / dv));
+		fb_text(disp, 0, G_TOP + 3 * (G_BOT - G_TOP) / 4 - 3, 1, ui_fmt1(buf, wlo / dv));
 	}
 }
 
@@ -161,6 +175,27 @@ static void render_alarm(void) {
 	fb_text(disp, (SSD1306_W - w) / 2, 52, 1, msg);
 }
 
+// Battery-low takeover: same shape as the CO alarm but calmer — no blink,
+// and the button acknowledges it (back to the tabs until the battery
+// recovers above the release threshold and dips again).
+static void render_alarm_bat(void) {
+	char buf[8];
+
+	fb_hline(disp, 0, SSD1306_W - 1, 0);
+	fb_hline(disp, 0, SSD1306_W - 1, SSD1306_H - 1);
+
+	int w = fb_text_big_width("BAT");
+	fb_text_big(disp, (SSD1306_W - w) / 2, 4, "BAT");
+
+	ui_fmt1(buf, (int)(cur.vbat_mv / 100));
+	w = fb_text_big_width(buf) + fb_text_width(1, "V") + 2;
+	int x = fb_text_big(disp, (SSD1306_W - w) / 2, 27, buf);
+	fb_text(disp, x + 2, 41, 1, "V");
+
+	static const char msg[] = "LOW BATTERY - push to ack";
+	fb_text(disp, (SSD1306_W - fb_text_width(1, msg)) / 2, 52, 1, msg);
+}
+
 // ---- state machine ---------------------------------------------------------
 
 static void set_power(enum PowerState p) {
@@ -184,6 +219,7 @@ static void set_power(enum PowerState p) {
 
 void ui_init(struct SSD1306 *d) {
 	disp = d;
+	tab = NTABS - 1; // start on CO, the rightmost tab
 	pwr = PWR_BRIGHT;
 	last_activity_ms = 0;
 }
@@ -191,10 +227,11 @@ void ui_init(struct SSD1306 *d) {
 void ui_second(const struct UIData *v) { cur = *v; }
 
 void ui_button(uint32_t now_ms) {
-	// a press on a dimmed/off display only wakes it
-	if (pwr == PWR_BRIGHT && alarm == 0) {
-		tab = (tab + 1) % 4;
-	}
+	if (alarm == 0 && bat_alarm && !bat_ack) {
+		bat_ack = true; // acknowledge the battery takeover, back to the tabs
+	} else if (pwr == PWR_BRIGHT && alarm == 0) {
+		tab = (tab + 1) % NTABS;
+	} // else: a press on a dimmed/off display only wakes it
 	last_activity_ms = now_ms;
 	set_power(PWR_BRIGHT);
 	last_render_ms = 0; // render now
@@ -219,15 +256,35 @@ void ui_tick(uint32_t now_ms) {
 	}
 	alarm = lvl;
 
+	// battery alarm, lower priority than CO: latches while the voltage sits
+	// in the [sense-connected, low) window, releases with hysteresis
+	bool bat_low = cur.vbat_mv >= BAT_SENSE_MIN_MV &&
+	               cur.vbat_mv < (bat_alarm ? BAT_RELEASE_MV : BAT_LOW_MV);
+	if (!bat_low) {
+		bat_ack = false; // recovered: the next dip alarms afresh
+	}
+	if (bat_low && !bat_alarm && alarm == 0) {
+		set_power(PWR_BRIGHT);
+	}
+	bat_alarm = bat_low;
+	bool bat_takeover = bat_alarm && !bat_ack && alarm == 0;
+
 	if (alarm > 0) {
-		// blink for attention
+		// blink for attention (CO only — the battery takeover stays calm)
 		bool phase = (now_ms / BLINK_MS) & 1;
 		if (phase != inverted) {
 			ssd1306_invert(disp, inverted = phase);
 		}
 	} else {
-		uint32_t idle = now_ms - last_activity_ms;
-		set_power(idle > OFF_AFTER ? PWR_OFF : idle > DIM_AFTER ? PWR_DIM : PWR_BRIGHT);
+		if (inverted) {
+			ssd1306_invert(disp, inverted = false);
+		}
+		if (bat_takeover) {
+			set_power(PWR_BRIGHT); // hold the panel awake while unacknowledged
+		} else {
+			uint32_t idle = now_ms - last_activity_ms;
+			set_power(idle > OFF_AFTER ? PWR_OFF : idle > DIM_AFTER ? PWR_DIM : PWR_BRIGHT);
+		}
 	}
 
 	if (pwr == PWR_OFF && alarm == 0) {
@@ -241,6 +298,8 @@ void ui_tick(uint32_t now_ms) {
 	fb_clear(disp);
 	if (alarm > 0) {
 		render_alarm();
+	} else if (bat_takeover) {
+		render_alarm_bat();
 	} else {
 		render_tab();
 	}

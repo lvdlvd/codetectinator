@@ -109,16 +109,23 @@ fastest in-tolerance 16x rate at a 16 MHz kernel).
 
 ## UI
 
-Tabbed interface with four tabs: P / T / H / CO. Each tab shows the
-current value large, plus a sliding graph of the last 15 minutes on a
-nonlinear time scale, annotated with min and max over the window.
+Tabbed interface, five tabs: BAT / P / T / H / CO; boots on CO (the
+rightmost). Each tab shows the current value in large Scale3x digits
+with the unit small at its lower right, plus a sliding min/max graph
+on a nonlinear time scale — max and min flank the plot on the left,
+each in its half-height. P/T/H/CO graph the last 15 minutes (1 s
+samples); BAT samples every 10 minutes, so its ring spans ~6 days of
+discharge curve.
 
 The pushbutton rotates through the tabs. If the display is dimmed or
 off, the first push only wakes it (no tab change).
 
 CO alarm: above 10 / 30 / 70 ppm a separate alarm display takes over
-(full contrast, overrides dimming and tab selection), showing the
-current level and which threshold is exceeded.
+(full contrast + 2 Hz invert blink, overrides dimming and tabs),
+showing the current level and which threshold is exceeded; releases
+with 0.5 ppm hysteresis. Battery alarm: below 6.5 V (with a battery
+attached, i.e. above the 4.5 V sense floor) a calmer takeover — no
+blink — which the button acknowledges; CO always outranks it.
 
 Display power policy: full contrast on button activity or alarm, timed
 decay to low contrast, display-off (0xAE) after a longer idle timeout.

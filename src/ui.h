@@ -11,8 +11,8 @@
 
 // Latest readings in history units (history.h); HIST_NONE = not available.
 struct UIData {
-	int16_t p, t, h, co;
-	uint32_t vbat_mv;
+	int16_t p, t, h, co, bat; // bat in 0.01 V
+	uint32_t vbat_mv;         // raw millivolts, for the battery alarm logic
 };
 
 // Format a 0.1-unit value with one decimal into buf (>= 8 bytes); returns buf.

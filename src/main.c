@@ -116,10 +116,10 @@ static void delay_ms(uint32_t d) {
 
 static uint32_t vbat_mv;
 static uint32_t seconds;
-static struct UIData latest = {HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, 0};
+static struct UIData latest = {HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, 0};
 
 static void one_second(void) {
-	struct UIData d = {HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, 0};
+	struct UIData d = {HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, 0};
 
 	// read the conversion triggered a second ago, start the next one
 	int32_t t_centi;
@@ -164,9 +164,17 @@ static void one_second(void) {
 		vbat_mv = battery_read_mv();
 	}
 	d.vbat_mv = vbat_mv;
+	if (vbat_mv > 0) {
+		d.bat = (int16_t)(vbat_mv / 10); // 0.01 V units for the BAT tab/graph
+	}
 
-	int16_t v[HIST_NCH] = {d.p, d.t, d.h, d.co};
-	history_push(v);
+	history_push(HIST_P, d.p);
+	history_push(HIST_T, d.t);
+	history_push(HIST_H, d.h);
+	history_push(HIST_CO, d.co);
+	if (seconds % history_period_s[HIST_BAT] == 0) {
+		history_push(HIST_BAT, d.bat); // slow channel: ~6 days of ring
+	}
 	ui_second(&d);
 	latest = d;
 	seconds++;

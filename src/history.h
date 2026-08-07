@@ -1,21 +1,26 @@
 #pragma once
 
-// 15-minute sliding history, one int16 sample per second per channel.
-// Storage units are chosen so everything fits an int16 with one decimal:
-//   HIST_P  0.1 hPa    HIST_T  0.01 degC    HIST_H  0.1 %RH    HIST_CO 0.1 ppm
+// Sliding history, 900 int16 samples per channel, with a per-channel sample
+// period: P/T/H/CO at 1 s (a 15-minute window), BAT at 10 min (a ~6-day
+// discharge curve). Storage units, one decimal in an int16:
+//   HIST_P  0.1 hPa   HIST_T  0.01 degC   HIST_H  0.1 %RH   HIST_CO 0.1 ppm
+//   HIST_BAT 0.01 V
 // HIST_NONE marks missing samples (sensor absent / not yet warmed up).
 
 #include <stdbool.h>
 #include <stdint.h>
 
-enum { HIST_P, HIST_T, HIST_H, HIST_CO, HIST_NCH };
-enum { HIST_LEN = 900 }; // seconds kept
+enum { HIST_P, HIST_T, HIST_H, HIST_CO, HIST_BAT, HIST_NCH };
+enum { HIST_LEN = 900 }; // samples kept per channel
 
 #define HIST_NONE INT16_MIN
 
-// Append one sample to every channel (call once a second, HIST_NONE for
-// channels with nothing to report this second).
-void history_push(const int16_t v[HIST_NCH]);
+// seconds between samples, per channel — the caller's push cadence
+extern const uint16_t history_period_s[HIST_NCH];
+
+// Append one sample to a channel (every history_period_s[ch] seconds;
+// HIST_NONE when there is nothing to report).
+void history_push(int ch, int16_t v);
 
 // Min/max over samples with age in [age_lo, age_hi) seconds (age 0 = the
 // newest sample). Returns false if the range holds no valid samples.
