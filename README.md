@@ -45,8 +45,8 @@ VBAT_SENSE divider: 3:1 from the 9 V side (R_top = 2 x R_bottom, e.g.
 Full scale ~9.9 V; reference is the regulated 3V3 so no VREFINT
 correction needed.
 
-Spare pins: PA4/PA5/PA6/PA7 (analog-capable), PB6 (TIM PWM, buzzer
-candidate), PB7, PA15.
+Spare pins: PA6/PA7 (analog-capable), PB6 (TIM PWM, buzzer
+candidate), PB7. (PA4 = button, PA5 = L432 LED role, PA15 = L432 VCP.)
 
 ## Firmware (src/)
 
@@ -72,20 +72,19 @@ the L432's OVER8 receiver proved deaf on the bench; 460800 is the
 fastest in-tolerance 16x rate at a 16 MHz kernel).
 
 - `main.c` — bring-up, vector table, SysTick ms timebase, 1 Hz sampling
-  loop, button debounce, console on the VCP at 921600 (OVER8: /16 from
-  the 16 MHz kernel would be +2.1% baud error). Stats + P/T/H/CO values
+  loop, button debounce, console on the VCP at 460800. Stats + P/T/H/CO values
   every 10 s; console keys for benching without hardware: 'b' acts as
   the pushbutton, 'd' toggles a live ASCII mirror of the framebuffer
   (1 char = 1 pixel, 128+ column terminal, \e[H/\e[K in-place refresh,
   streamed cooperatively so it never blocks the loop)
 - `ps1co.c` — PS1-CO-100 Q&A protocol: 0x86 poll + checksum-verified
   parser (also accepts active-upload frames), plus the 0xD7 module
-  identification (sensor type/range/unit/decimals), retried at init
-  until answered and checked against the expected CO/ppm/1-decimal —
-  catches e.g. a 1000 ppm variant, and its range field cross-checks the
-  concentration scale. NOTE: the concentration scale (bytes 6..7 =
-  0.1 ppm) matches the datasheet's unit/decimals config but its
-  examples are inconsistent — verify on the bench
+  identification (our module ignores it; retries stop after a minute)
+  and the full-range field riding every 0x86 reply as the scale check.
+  Scale PROVEN 0.1 ppm on the bench 2026-08-07: exhaust-plume test read
+  ppmf/mgf = 141/162, ratio 1.149 vs the theoretical 1.145 mg/m3 per
+  ppm, at a physically plausible 14.1 ppm (the cell's "1000 ppm" fine
+  print is the raw sensor ceiling, not the module calibration)
 - `bme280.c` — transport (forced mode 1x/1x/1x); the calibration decode
   and fixed-point compensation live in `bme280_comp.c`, a pure unit with
   a host-side test (`make test`): pinned vectors (T/P from the BMP280
@@ -102,10 +101,12 @@ fastest in-tolerance 16x rate at a 16 MHz kernel).
   smoothing of the same font (15x21 glyphs, no extra font data),
   contrast/dim/off, SPI shared with the BME280 through the SPIQ
   ss-hook (CS+DC demux)
-- `battery.c` — ADC1_IN2 single conversions, 640.5-cycle sample time
-- `history.c` — 4 x 900 s int16 ring (units: 0.1 hPa / 0.01 C / 0.1 %RH
-  / 0.1 ppm)
-- `ui.c` — tabs, nonlinear-time graph, alarm takeover, dim policy
+- `battery.c` — single conversions on the board's VBAT channel (board.h),
+  640.5-cycle sample time
+- `history.c` — 5 x 900-sample int16 rings, per-channel cadence (P/T/H/CO
+  1 s, BAT 10 min; units 0.1 hPa / 0.01 C / 0.1 %RH / 0.1 ppm / 0.01 V)
+- `ui.c` — tabs, nonlinear-time graph, CO + battery alarm takeovers,
+  dim policy
 
 ## UI
 
