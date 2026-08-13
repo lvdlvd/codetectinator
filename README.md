@@ -1,4 +1,4 @@
-# The Codedectinator is a portable Carbonmonoxide sensor
+# The Codetectinator is a portable Carbonmonoxide sensor
 
 The Codetectinator combines a PS1-CO-100-MOD calibrated CO sensor,
 a BME280 Pressure/temperature/humidity sensor, an STM32 and an
