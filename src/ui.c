@@ -9,6 +9,7 @@ enum { // ms of inactivity
 	OFF_AFTER = 150 * 1000,
 	RENDER_MS = 250,
 	BLINK_MS = 500,
+	LONG_PRESS_MS = 400, // held past this: graph until release, no tab change
 };
 enum PowerState { PWR_BRIGHT, PWR_DIM, PWR_OFF };
 
@@ -40,14 +41,24 @@ static bool inverted; // alarm blink phase
 // battery surfaces only as the low-battery takeover.
 static const struct {
 	const char *unit;
+	int ch;    // history channel, for the long-press graph
 	int div;
+	int gspan; // minimum graph y-span, in history units (data centered in it)
+	bool nonneg; // clip the graph floor at 0 (ppm: a negative axis is nonsense)
 } tabs[] = {
-    {"hPa", 1},
-    {"\'C", 10}, // 5x7 has no degree sign; ' reads well enough
-    {"%RH", 1},
-    {"ppm", 1}, // last: the startup tab
+    {"hPa", HIST_P, 1, 10, false},
+    {"\'C", HIST_T, 10, 100, false}, // 5x7 has no degree sign; ' reads well enough
+    {"%RH", HIST_H, 1, 10, false},
+    {"ppm", HIST_CO, 1, 10, true}, // last: the startup tab; 0.0..1.0 when flat at 0
 };
 enum { NTABS = sizeof tabs / sizeof tabs[0] };
+
+// button gesture state: short press (release before LONG_PRESS_MS) cycles the
+// tab, holding longer shows the graph until release. rotate_armed remembers
+// whether the press landed on a live value screen — a press that merely woke
+// a dimmed panel or acked an alarm must do nothing further on release.
+static bool btn_down, rotate_armed, graphing;
+static uint32_t btn_down_ms;
 
 int ui_alarm_level(void) { return alarm; }
 
@@ -92,6 +103,59 @@ static void render_value(const char *header, const char *val, const char *unit) 
 	}
 	int xe = fb_text_big(disp, x0, y, val);
 	fb_text(disp, xe + 3, y + 21 - 7, 1, unit);
+}
+
+// Long-press graph, full screen: per-column min/max band of the last 15
+// minutes on a nonlinear time scale — column k (0 = oldest, G_W-1 = now)
+// covers ages [edge(k+1), edge(k)) with edge(k) = HIST_LEN*((G_W-k)/G_W)^2,
+// so the right half spans the last ~3.7 minutes. Left label column: window
+// max on top, the unit (= tab indicator) in the middle, window min at the
+// bottom; ticks under the plot at 15/5/1 minutes.
+enum { G_X0 = 32, G_W = SSD1306_W - G_X0, G_TOP = 1, G_BOT = SSD1306_H - 4 };
+
+static int age_edge(int k) { return HIST_LEN * (G_W - k) * (G_W - k) / (G_W * G_W); }
+
+static void render_graph(void) {
+	char buf[8];
+	int dv = tabs[tab].div;
+
+	fb_text(disp, 0, (SSD1306_H - 7) / 2, 1, tabs[tab].unit);
+
+	// y scale from the full-window min/max, padded; flat lines centered
+	int16_t wlo, whi;
+	if (!history_minmax(tabs[tab].ch, 0, HIST_LEN, &wlo, &whi)) {
+		return; // no data at all yet: just the unit label
+	}
+	int span = whi - wlo;
+	if (span < tabs[tab].gspan) { // pad to the tab's minimum scale, data centered
+		wlo -= (tabs[tab].gspan - span) / 2;
+		span = tabs[tab].gspan;
+		whi = wlo + span;
+	}
+	if (tabs[tab].nonneg && wlo < 0) { // shift the padded window up to a 0 floor
+		whi -= wlo;
+		wlo = 0;
+	}
+	for (int k = 0; k < G_W; k++) {
+		int a_hi = age_edge(k);     // older edge
+		int a_lo = age_edge(k + 1); // newer edge
+		if (a_hi == a_lo) {
+			a_hi = a_lo + 1; // rightmost columns: at least one sample wide
+		}
+		int16_t lo, hi;
+		if (!history_minmax(tabs[tab].ch, a_lo, a_hi, &lo, &hi)) {
+			continue;
+		}
+		fb_vline(disp, G_X0 + k, G_BOT - (hi - wlo) * (G_BOT - G_TOP) / span,
+		         G_BOT - (lo - wlo) * (G_BOT - G_TOP) / span);
+	}
+	// time ticks at 15/5/1 minutes: k = G_W - G_W*sqrt(age/900)
+	fb_vline(disp, G_X0, G_BOT + 1, G_BOT + 2);
+	fb_vline(disp, G_X0 + 41, G_BOT + 1, G_BOT + 2);
+	fb_vline(disp, G_X0 + 71, G_BOT + 1, G_BOT + 2);
+
+	fb_text(disp, 0, 0, 1, ui_fmt1(buf, whi / dv));
+	fb_text(disp, 0, G_BOT - 6, 1, ui_fmt1(buf, wlo / dv));
 }
 
 static void render_tab(void) {
@@ -154,18 +218,38 @@ void ui_init(struct SSD1306 *d) {
 
 void ui_second(const struct UIData *v) { cur = *v; }
 
-void ui_button(uint32_t now_ms) {
-	if (alarm == 0 && bat_alarm && !bat_ack) {
-		bat_ack = true; // acknowledge the battery takeover, back to the tabs
-	} else if (pwr == PWR_BRIGHT && alarm == 0) {
-		tab = (tab + 1) % NTABS;
-	} // else: a press on a dimmed/off display only wakes it
+void ui_button(uint32_t now_ms, bool down) {
+	if (down) {
+		btn_down = true;
+		btn_down_ms = now_ms;
+		rotate_armed = pwr == PWR_BRIGHT && alarm == 0 && !(bat_alarm && !bat_ack);
+		if (alarm == 0 && bat_alarm && !bat_ack) {
+			bat_ack = true; // acknowledge the battery takeover, back to the tabs
+		} // else on a dimmed/off display the press only wakes it
+	} else {
+		btn_down = false;
+		if (graphing) {
+			graphing = false; // long press: release just puts the value back
+		} else if (rotate_armed && now_ms - btn_down_ms < LONG_PRESS_MS) {
+			tab = (tab + 1) % NTABS;
+		}
+	}
 	last_activity_ms = now_ms;
 	set_power(PWR_BRIGHT);
 	last_render_ms = 0; // render now
 }
 
 void ui_tick(uint32_t now_ms) {
+	// a held button counts as activity and, past the long-press threshold on
+	// a live value screen, brings up the graph
+	if (btn_down) {
+		last_activity_ms = now_ms;
+		if (rotate_armed && !graphing && now_ms - btn_down_ms >= LONG_PRESS_MS) {
+			graphing = true;
+			last_render_ms = 0;
+		}
+	}
+
 	// alarm level with hysteresis on release
 	int lvl = 0;
 	if (cur.co != HIST_NONE) {
@@ -228,6 +312,8 @@ void ui_tick(uint32_t now_ms) {
 		render_alarm();
 	} else if (bat_takeover) {
 		render_alarm_bat();
+	} else if (graphing) {
+		render_graph();
 	} else {
 		render_tab();
 	}

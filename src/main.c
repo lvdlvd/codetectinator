@@ -348,9 +348,17 @@ void Reset_Handler(void) {
 				next_mirror = now;
 				tprintf("\e[2J\e[H");
 				break;
-			case 'b': // act as the pushbutton
-				ui_button(now);
+			case 'b': // act as a short press of the pushbutton
+				ui_button(now, true);
+				ui_button(now, false);
 				break;
+			case 'g': { // act as button hold/release (hold = graph)
+				static bool vheld;
+				vheld = !vheld;
+				ui_button(now, vheld);
+				tprintf("virtual button %s\n", vheld ? "held" : "released");
+				break;
+			}
 			case 'c': { // bench: cycle a fake CO reading through the alarm tiers
 				static const int16_t lvl[] = {-1, 150, 350, 750};
 				static const char *const lname[] = {"off", "15.0 ppm", "35.0 ppm", "75.0 ppm"};
@@ -419,9 +427,7 @@ void Reset_Handler(void) {
 				if (++btn_cnt >= 3) {
 					btn_stable = raw;
 					btn_cnt = 0;
-					if (raw) {
-						ui_button(now);
-					}
+					ui_button(now, raw); // both edges: the UI times the hold
 				}
 			} else {
 				btn_cnt = 0;

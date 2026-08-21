@@ -22,6 +22,9 @@ char *ui_fmt1(char *buf, int v);
 
 void ui_init(struct SSD1306 *d);
 void ui_second(const struct UIData *v); // call once a second, after history_push
-void ui_button(uint32_t now_ms);        // debounced press event
+// Debounced press/release edges. A short press (released before the long-
+// press threshold) cycles the tab; holding shows the current value's graph
+// until release.
+void ui_button(uint32_t now_ms, bool down);
 void ui_tick(uint32_t now_ms);          // call from the main loop; renders when due
 int ui_alarm_level(void);               // 0 none, 1 >10, 2 >30, 3 >70 ppm
