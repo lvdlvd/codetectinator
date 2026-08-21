@@ -1,9 +1,11 @@
 #pragma once
 
-// Codetectinator UI: four tabs (P / T / H / CO), each with the current value
-// large and a 15-minute sliding min/max graph on a nonlinear time scale;
-// a CO alarm screen that takes over above 10/30/70 ppm; button = tab cycle
-// (or wake when dimmed); timed contrast decay and display-off.
+// Codetectinator UI for the 128x32 panel: one value at a time (P / T / H /
+// CO, boots on CO), digits as large as the widest value allows (Scale3x,
+// 21 px) with the unit at a third height at the lower right — the unit is
+// the tab indicator, there is no tab bar; a CO alarm screen that takes over
+// above 10/30/70 ppm; button = tab cycle (or wake when dimmed); timed
+// contrast decay and display-off.
 
 #include "ssd1306.h"
 

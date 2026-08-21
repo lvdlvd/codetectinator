@@ -15,7 +15,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum { SSD1306_W = 128, SSD1306_H = 64 };
+enum { SSD1306_W = 128, SSD1306_H = 32 }; // H: 64 or 32; init derives mux + COM wiring
 
 struct SSD1306 {
 	struct SPIQ *q;
@@ -32,6 +32,7 @@ void ssd1306_init(struct SSD1306 *d);
 void ssd1306_flush(struct SSD1306 *d);
 
 void ssd1306_on(struct SSD1306 *d, bool on);          // 0xAF / 0xAE (sleep, RAM retained)
+void ssd1306_test(struct SSD1306 *d, bool all);       // 0xA5 all pixels on (ignores RAM) / 0xA4 resume
 void ssd1306_invert(struct SSD1306 *d, bool inv);     // 0xA7 / 0xA6
 void ssd1306_contrast(struct SSD1306 *d, uint8_t v);  // 0x81 <v>
 // Dim beyond what contrast alone allows: shortens precharge and drops VCOMH.

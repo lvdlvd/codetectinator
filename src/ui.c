@@ -25,7 +25,7 @@ enum { BAT_LOW_MV = 6500, BAT_RELEASE_MV = 6800, BAT_SENSE_MIN_MV = 4500 };
 
 static struct SSD1306 *disp;
 static struct UIData cur = {HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, 0};
-static int tab;   // BAT P T H CO; ui_init boots it on CO, the raison d'etre
+static int tab;   // P T H CO; ui_init boots it on CO, the raison d'etre
 static int alarm; // CO alarm, 0..3
 static bool bat_alarm, bat_ack;
 static enum PowerState pwr;
@@ -33,20 +33,19 @@ static uint32_t last_activity_ms;
 static uint32_t last_render_ms;
 static bool inverted; // alarm blink phase
 
-// per-tab presentation: history channel, display divider (history units per
-// displayed 0.1-unit; T and BAT store two decimals but show one), and the
-// unit label drawn small beside the big value
+// per-tab presentation: display divider (history units per displayed
+// 0.1-unit; T stores two decimals but shows one) and the unit label drawn
+// small at the big value's lower right — on the 128x32 panel the unit IS the
+// tab indicator, there is no room (or need) for a tab bar. No BAT tab: the
+// battery surfaces only as the low-battery takeover.
 static const struct {
-	const char *name;
 	const char *unit;
-	int ch;
 	int div;
 } tabs[] = {
-    {"BAT", "V", HIST_BAT, 10},
-    {"P", "hPa", HIST_P, 1},
-    {"T", "\'C", HIST_T, 10}, // 5x7 has no degree sign; ' reads well enough
-    {"H", "%RH", HIST_H, 1},
-    {"CO", "ppm", HIST_CO, 1}, // rightmost: the startup tab
+    {"hPa", 1},
+    {"\'C", 10}, // 5x7 has no degree sign; ' reads well enough
+    {"%RH", 1},
+    {"ppm", 1}, // last: the startup tab
 };
 enum { NTABS = sizeof tabs / sizeof tabs[0] };
 
@@ -76,103 +75,44 @@ char *ui_fmt1(char *buf, int v) {
 
 // ---- screens ---------------------------------------------------------------
 
-// Graph geometry: the min/max labels sit LEFT of the plot, max in the top
-// half-height, min in the bottom. Nonlinear time scale over the plot width:
-// column k (0 = oldest, G_W-1 = now) covers ages [edge(k+1), edge(k)) with
-// edge(k) = HIST_LEN * ((G_W-k)/G_W)^2 — the right half spans the last ~3.7
-// minutes, the left half the remaining ~11.
-enum { G_X0 = 32, G_W = SSD1306_W - G_X0, G_TOP = 34, G_BOT = 60 };
-
-static int age_edge(int k) { return HIST_LEN * (G_W - k) * (G_W - k) / (G_W * G_W); }
+// One value fills the 128x32 panel: Scale3x digits (21 px), the unit at a
+// third of that (the 5x7 base font) baseline-aligned at the lower right, the
+// group centered. Optional header line above squeezes the digits to the
+// bottom (alarm screens); without one the digits center vertically.
+static void render_value(const char *header, const char *val, const char *unit) {
+	int y = 5;
+	if (header != NULL) {
+		fb_text(disp, (SSD1306_W - fb_text_width(1, header)) / 2, 0, 1, header);
+		y = 9;
+	}
+	int wv = fb_text_big_width(val), wu = fb_text_width(1, unit);
+	int x0 = (SSD1306_W - (wv + 3 + wu)) / 2;
+	if (x0 < 0) {
+		x0 = 0;
+	}
+	int xe = fb_text_big(disp, x0, y, val);
+	fb_text(disp, xe + 3, y + 21 - 7, 1, unit);
+}
 
 static void render_tab(void) {
 	char buf[8];
-
-	// tab bar: NTABS equal cells, current one inverted
-	for (int i = 0; i < NTABS; i++) {
-		int x0 = i * SSD1306_W / NTABS, x1 = (i + 1) * SSD1306_W / NTABS - 1;
-		int w = fb_text_width(1, tabs[i].name);
-		fb_text(disp, x0 + (x1 - x0 + 1 - w) / 2, 1, 1, tabs[i].name);
-	}
-	fb_invert_rect(disp, tab * SSD1306_W / NTABS, 0, (tab + 1) * SSD1306_W / NTABS - 1, 8);
-
-	int16_t v[NTABS] = {cur.bat, cur.p, cur.t, cur.h, cur.co};
-	int16_t val = v[tab];
-	int dv = tabs[tab].div;
-
-	// current value large (Scale3x), unit small at its lower right — the
-	// value+unit group centered as a whole
-	if (val == HIST_NONE) {
-		ui_fmt1(buf, 0);
+	int16_t v[NTABS] = {cur.p, cur.t, cur.h, cur.co};
+	if (v[tab] == HIST_NONE) {
 		buf[0] = '-', buf[1] = '-', buf[2] = 0;
 	} else {
-		ui_fmt1(buf, val / dv);
+		ui_fmt1(buf, v[tab] / tabs[tab].div);
 	}
-	{
-		int wv = fb_text_big_width(buf), wu = fb_text_width(1, tabs[tab].unit);
-		int x0 = (SSD1306_W - (wv + 3 + wu)) / 2;
-		if (x0 < 0) {
-			x0 = 0;
-		}
-		int xe = fb_text_big(disp, x0, 11, buf);
-		fb_text(disp, xe + 3, 11 + 21 - 7, 1, tabs[tab].unit); // baseline-aligned
-	}
-
-	// graph: y scale from the full-window min/max, padded; flat lines centered
-	int16_t wlo, whi;
-	if (history_minmax(tabs[tab].ch, 0, HIST_LEN, &wlo, &whi)) {
-		int span = whi - wlo;
-		if (span < 8) { // under 0.8 display units: pad to keep noise flat
-			wlo -= (8 - span) / 2;
-			whi = wlo + 8;
-			span = 8;
-		}
-		for (int k = 0; k < G_W; k++) {
-			int a_hi = age_edge(k);     // older edge
-			int a_lo = age_edge(k + 1); // newer edge
-			if (a_hi == a_lo) {
-				a_hi = a_lo + 1; // rightmost columns: at least one sample wide
-			}
-			int16_t lo, hi;
-			if (!history_minmax(tabs[tab].ch, a_lo, a_hi, &lo, &hi)) {
-				continue;
-			}
-			int y0 = G_BOT - (hi - wlo) * (G_BOT - G_TOP) / span;
-			int y1 = G_BOT - (lo - wlo) * (G_BOT - G_TOP) / span;
-			fb_vline(disp, G_X0 + k, y0, y1);
-		}
-		// time ticks at 15/5/1 minutes: k = G_W - G_W*sqrt(age/900)
-		fb_vline(disp, G_X0, G_BOT + 1, G_BOT + 2);
-		fb_vline(disp, G_X0 + 41, G_BOT + 1, G_BOT + 2);
-		fb_vline(disp, G_X0 + 71, G_BOT + 1, G_BOT + 2);
-
-		// min/max labels left of the plot: max in the top half, min in the
-		// bottom half of the graph's height
-		fb_text(disp, 0, G_TOP + (G_BOT - G_TOP) / 4 - 3, 1, ui_fmt1(buf, whi / dv));
-		fb_text(disp, 0, G_TOP + 3 * (G_BOT - G_TOP) / 4 - 3, 1, ui_fmt1(buf, wlo / dv));
-	}
+	render_value(NULL, buf, tabs[tab].unit);
 }
 
 static void render_alarm(void) {
 	char buf[8];
-
-	fb_rect_fill(disp, 0, 0, SSD1306_W - 1, 2);
-	fb_rect_fill(disp, 0, SSD1306_H - 3, SSD1306_W - 1, SSD1306_H - 1);
-
-	int w = fb_text_big_width("CO");
-	fb_text_big(disp, (SSD1306_W - w) / 2, 4, "CO");
-
+	static const char *over[3] = {"CO OVER 10 ppm", "CO OVER 30 ppm", "CO OVER 70 ppm"};
+	buf[0] = '-', buf[1] = '-', buf[2] = 0;
 	if (cur.co != HIST_NONE) {
 		ui_fmt1(buf, cur.co);
-		w = fb_text_big_width(buf) + fb_text_width(1, "ppm") + 2;
-		int x = fb_text_big(disp, (SSD1306_W - w) / 2, 27, buf);
-		fb_text(disp, x + 2, 41, 1, "ppm");
 	}
-
-	static const char *over[3] = {"OVER 10 ppm", "OVER 30 ppm", "OVER 70 ppm"};
-	const char *msg = over[alarm - 1];
-	w = fb_text_width(1, msg);
-	fb_text(disp, (SSD1306_W - w) / 2, 52, 1, msg);
+	render_value(over[alarm - 1], buf, "ppm");
 }
 
 // Battery-low takeover: same shape as the CO alarm but calmer — no blink,
@@ -180,20 +120,8 @@ static void render_alarm(void) {
 // recovers above the release threshold and dips again).
 static void render_alarm_bat(void) {
 	char buf[8];
-
-	fb_hline(disp, 0, SSD1306_W - 1, 0);
-	fb_hline(disp, 0, SSD1306_W - 1, SSD1306_H - 1);
-
-	int w = fb_text_big_width("BAT");
-	fb_text_big(disp, (SSD1306_W - w) / 2, 4, "BAT");
-
 	ui_fmt1(buf, (int)(cur.vbat_mv / 100));
-	w = fb_text_big_width(buf) + fb_text_width(1, "V") + 2;
-	int x = fb_text_big(disp, (SSD1306_W - w) / 2, 27, buf);
-	fb_text(disp, x + 2, 41, 1, "V");
-
-	static const char msg[] = "LOW BATTERY - push to ack";
-	fb_text(disp, (SSD1306_W - fb_text_width(1, msg)) / 2, 52, 1, msg);
+	render_value("LOW BAT - push to ack", buf, "V");
 }
 
 // ---- state machine ---------------------------------------------------------

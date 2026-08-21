@@ -68,7 +68,9 @@ static const pinconf_t board[] = {
 	PA2_USART2_TX | PIN_HIGH,     //% ST-LINK VCP (debug console TX)
 	PA15_USART2_RX | PIN_PULLUP,  //% ST-LINK VCP RX — PA15/AF3 on this board!
 	PB0 | PIN_OUTPUT,             //% OLED /RST, held low until released in main
-	PB3_SPI1_SCK,                 //% OLED D0 + BME280 SCK (+ LD3 activity light)
+	// PULLDOWN: spiq idles with SPE=0, which tri-states SCK; unpulled it floats
+	// to ~2 V (logic threshold) and re-take glitch edges bit-slip the OLED
+	PB3_SPI1_SCK | PIN_PULLDOWN,  //% OLED D0 + BME280 SCK (+ LD3 activity light)
 	PB4_SPI1_MISO,                //% BME280 SDO
 	PB5_SPI1_MOSI,                //% OLED D1 + BME280 SDI
 };

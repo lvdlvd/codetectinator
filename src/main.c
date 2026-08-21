@@ -118,6 +118,11 @@ static uint32_t vbat_mv;
 static uint32_t seconds;
 static struct UIData latest = {HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, 0};
 
+// bench fakes, injected into the UI by one_second: CO in 0.1 ppm (-1 = off,
+// cycled through the alarm tiers by 'c'), battery 6.2 V (toggled by 'v')
+static int16_t co_fake = -1;
+static bool bat_fake;
+
 static void one_second(void) {
 	struct UIData d = {HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, HIST_NONE, 0};
 
@@ -175,6 +180,14 @@ static void one_second(void) {
 	if (seconds % history_period_s[HIST_BAT] == 0) {
 		history_push(HIST_BAT, d.bat); // slow channel: ~6 days of ring
 	}
+	// bench: console-injected fake readings ('c'/'v'), fed to the UI only —
+	// pushed AFTER history so the rings keep the real data
+	if (co_fake >= 0) {
+		d.co = co_fake;
+	}
+	if (bat_fake) {
+		d.vbat_mv = 6200;
+	}
 	ui_second(&d);
 	latest = d;
 	seconds++;
@@ -186,6 +199,11 @@ static void one_second(void) {
 // '#'/' ' chars (1 char = 1 pixel) each ended with \e[K, then two status
 // lines. Emitted cooperatively from the main loop as TX-fifo space frees up,
 // so a 8.6K frame streams without blocking or overflowing the 1K fifo.
+// 'w' probe state: 0 = normal, 1..3 = CS/DC/RST held low. Nonzero pauses ALL
+// SPI traffic (BME poll, ui flush) — its ss-hook deselect would yank CS back
+// high mid-measurement, which is what blinded the first wiggle test.
+static uint8_t oled_wiggle;
+
 static bool mirror;          // toggled by 'd'
 static int mirror_row = -1;  // -1 idle, 0..SSD1306_H+1 = next line to emit
 static uint32_t next_mirror;
@@ -280,10 +298,12 @@ void Reset_Handler(void) {
 	nvic_enable(DMA_CH_IRQN(CH_CO_TX));
 	nvic_enable(USART1_IRQn);
 
-	// SPI1 at 8 MHz, mode 0, software slave select via ss_hook
+	// SPI1 at 2 MHz, mode 0, software slave select via ss_hook. 8 MHz (Div2)
+	// double-clocks the OLED over the breadboard jumpers: 1-bit stream slips
+	// show as parts of the image jumping a row. Div8 for signal-integrity margin.
 	dma_set_mux(CH_SPI_RX, DMA_REQ_SPI1_RX);
 	dma_set_mux(CH_SPI_TX, DMA_REQ_SPI1_TX);
-	spiq_init(&spiq, &SPI1, SPI_CR1_BR_Div2, CH_SPI_RX, CH_SPI_TX, ss_hook);
+	spiq_init(&spiq, &SPI1, SPI_CR1_BR_Div8, CH_SPI_RX, CH_SPI_TX, ss_hook);
 	nvic_enable(DMA_CH_IRQN(CH_SPI_RX));
 
 	fault_report(cputc); // print a crash from the previous run, if any
@@ -331,6 +351,60 @@ void Reset_Handler(void) {
 			case 'b': // act as the pushbutton
 				ui_button(now);
 				break;
+			case 'c': { // bench: cycle a fake CO reading through the alarm tiers
+				static const int16_t lvl[] = {-1, 150, 350, 750};
+				static const char *const lname[] = {"off", "15.0 ppm", "35.0 ppm", "75.0 ppm"};
+				static uint8_t ci;
+				ci = (ci + 1) % 4;
+				co_fake = lvl[ci];
+				tprintf("fake CO %s\n", lname[ci]);
+				break;
+			}
+			case 'v': // bench: toggle a fake low battery
+				bat_fake = !bat_fake;
+				tprintf("fake battery %s\n", bat_fake ? "6.2 V (low)" : "off");
+				break;
+			case 'i': // OLED: pulse reset and re-run the init sequence
+				oled_wiggle = 0;
+				digitalLo(OLED_RST);
+				delay_ms(10);
+				digitalHi(OLED_RST);
+				delay_ms(10);
+				ssd1306_init(&oled);
+				ui_init(&oled);
+				tprintf("oled reinit\n");
+				break;
+			case 'w': { // OLED: wiggle exactly one of CS/DC/RST low per press, so a
+				// meter at the module tells the three wires APART (catches swaps,
+				// which the toggle-all-together version was blind to)
+				static const char *const wname[] = {"all HIGH", "only CS LOW", "only DC LOW",
+				                                    "only RST LOW"};
+				uint8_t wst = oled_wiggle = (oled_wiggle + 1) & 3;
+				if (wst == 1) {
+					digitalLo(OLED_CS);
+				} else {
+					digitalHi(OLED_CS);
+				}
+				if (wst == 2) {
+					digitalLo(OLED_DC);
+				} else {
+					digitalHi(OLED_DC);
+				}
+				if (wst == 3) {
+					digitalLo(OLED_RST);
+				} else {
+					digitalHi(OLED_RST);
+				}
+				tprintf("oled wiggle: %s ('i' to restore)\n", wname[wst]);
+				break;
+			}
+			case 'a': { // OLED: toggle all-pixels-on (0xA5, bypasses RAM)
+				static bool allon;
+				allon = !allon;
+				ssd1306_test(&oled, allon);
+				tprintf("oled %s\n", allon ? "0xA5 all-on" : "0xA4 resume");
+				break;
+			}
 			default:
 				tprintf("key %02x\n", key); // unknown key: ack it, helps bench debugging
 				break;
@@ -356,10 +430,14 @@ void Reset_Handler(void) {
 
 		if ((int32_t)(now - next_second) >= 0) {
 			next_second += 1000;
-			one_second();
+			if (!oled_wiggle) {
+				one_second();
+			}
 		}
 
-		ui_tick(now);
+		if (!oled_wiggle) {
+			ui_tick(now);
+		}
 		mirror_pump(now);
 
 		// LED: fast blink on alarm, short heartbeat blip otherwise

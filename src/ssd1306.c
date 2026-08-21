@@ -21,14 +21,15 @@ void ssd1306_init(struct SSD1306 *d) {
 	static const uint8_t seq[] = {
 	    0xAE,       // display off
 	    0xD5, 0x80, // clock divide: reset default
-	    0xA8, 0x3F, // multiplex 64
+	    0xA8, SSD1306_H - 1, // multiplex ratio = panel rows
 	    0xD3, 0x00, // display offset 0
 	    0x40,       // start line 0
 	    0x8D, 0x14, // charge pump on
 	    0x20, 0x00, // horizontal addressing
 	    0xA1,       // segment remap (col 127 -> SEG0 mirrored)
 	    0xC8,       // COM scan reversed
-	    0xDA, 0x12, // COM pins: alternative, no remap
+	    // COM pins: 64-row panels wire COMs alternating, 32-row sequential
+	    0xDA, SSD1306_H == 64 ? 0x12 : 0x02,
 	    0x81, 0xCF, // contrast
 	    0xD9, 0xF1, // precharge 15/1
 	    0xDB, 0x40, // VCOMH deselect
@@ -63,6 +64,7 @@ void ssd1306_flush(struct SSD1306 *d) {
 }
 
 void ssd1306_on(struct SSD1306 *d, bool on) { cmd1(d, on ? 0xAF : 0xAE); }
+void ssd1306_test(struct SSD1306 *d, bool all) { cmd1(d, all ? 0xA5 : 0xA4); }
 void ssd1306_invert(struct SSD1306 *d, bool inv) { cmd1(d, inv ? 0xA7 : 0xA6); }
 void ssd1306_contrast(struct SSD1306 *d, uint8_t v) { cmd2(d, 0x81, v); }
 

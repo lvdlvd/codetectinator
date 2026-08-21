@@ -51,7 +51,9 @@ static const pinconf_t board[] = {
 	PA2_USART2_TX | PIN_HIGH,     //% ST-LINK VCP (debug console TX)
 	PA3_USART2_RX | PIN_PULLUP,   //% ST-LINK VCP (debug console RX: bench keys)
 	PB0 | PIN_OUTPUT,             //% OLED /RST, held low until released in main
-	PB3_SPI1_SCK,                 //% OLED D0 + BME280 SCK
+	// PULLDOWN: spiq idles with SPE=0, which tri-states SCK — hold it at the
+	// mode-0 idle level instead of floating at logic threshold
+	PB3_SPI1_SCK | PIN_PULLDOWN,  //% OLED D0 + BME280 SCK
 	PB4_SPI1_MISO,                //% BME280 SDO
 	PB5_SPI1_MOSI,                //% OLED D1 + BME280 SDI
 	PB8 | PIN_OUTPUT,             //% LD2 user LED
