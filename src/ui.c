@@ -166,7 +166,16 @@ static void render_tab(void) {
 	} else {
 		ui_fmt1(buf, v[tab] / tabs[tab].div);
 	}
-	render_value(NULL, buf, tabs[tab].unit);
+	// acknowledged-but-still-low battery: small inverted reminder top right;
+	// an empty header drops the digits to the header layout to clear it
+	bool lo = bat_alarm && bat_ack;
+	if (lo) {
+		static const char msg[] = "BAT LO";
+		int w = fb_text_width(1, msg);
+		fb_text(disp, SSD1306_W - w - 1, 1, 1, msg);
+		fb_invert_rect(disp, SSD1306_W - w - 2, 0, SSD1306_W - 1, 8);
+	}
+	render_value(lo ? "" : NULL, buf, tabs[tab].unit);
 }
 
 static void render_alarm(void) {
