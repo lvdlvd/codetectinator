@@ -4,15 +4,17 @@
 #
 # BOARD=g431 : NUCLEO-G431KB (the original; ST-LINK currently wedged)
 # BOARD=l432 : NUCLEO-L432KC (same breadboard wiring, see board_l432.h)
-# Run `make clean` when switching boards: device.h & friends must regen.
+# Run `make clean` when switching boards: board.h must be recopied. The
+# narray-generated files no longer need it — they live per board, below.
 BOARD ?= l432
+BOARDS = g431 l432
 
 ifeq ($(BOARD),g431)
 PART      = STM32G431
 PARTFULL  = STM32G431KBU6
 MEMTARGET = STM32G431Bxx_ROM
 FAMILY    = stm32g4
-CLOCKSRC  = $(LIB)/clock.c
+CLOCKSRC  = $(NLIB)/clock.c
 OCDTARGET = target/stm32g4x.cfg
 else
 PART      = STM32L432
@@ -23,9 +25,33 @@ CLOCKSRC  =
 OCDTARGET = target/stm32l4x.cfg
 endif
 
-LIB    = ../../n-array/lib
-PERIPH = ../../n-array/periph/$(FAMILY)
-NARRAY = ../../n-array/gen/narray
+# SELF-CONTAINED [N]ARRAY BUILD. Everything this firmware compiles lives in
+# this repository: the lib sources it uses are copied into nlib/ and the
+# narray-generated files into g431/ and l432/, all of them tracked. The rules
+# that copy and generate carry NO prerequisite on the n-array checkout, so a
+# file already present is never refreshed, whatever upstream does — n-array
+# can evolve freely without breaking this build, and these copies are ours to
+# edit. A file is fetched only when missing, so the one gesture that reaches
+# upstream is
+#
+#	make n-array-clean && make	# take current n-array, see what breaks
+#
+# and that breakage lands in a build you asked for. `make clean` deliberately
+# leaves them alone, so clean-and-rebuild needs no checkout. NARRAY_DIR names
+# that checkout: a peer of this repo by default, overridable in the
+# environment or on the command line. RULE OF THREE: a local edit to nlib/
+# wanted for the third time belongs upstream in n-array, anonymized.
+#
+# nlib/ holds the union over both boards — the G4 and L4 halves of the lib
+# have distinct names (clock.h vs clock_l4.h, dma_g4.h vs dma_l4.h,
+# usart_v3.h vs usart_v2.h), so one directory serves both. The generated
+# headers do NOT: device.h and pinmux.h genuinely differ per part, which is
+# why each board gets its own directory and both can sit here at once.
+NARRAY_DIR ?= ../../n-array
+
+NLIB   = nlib
+PERIPH = $(NARRAY_DIR)/periph/$(FAMILY)
+NARRAY = $(NARRAY_DIR)/gen/narray
 
 REVISION := $(shell git log -1 --format="%h" 2>/dev/null || echo 0)
 
@@ -36,37 +62,68 @@ SIZE    = $(PREFIX)size
 
 ARCH    = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
 CFLAGS  = -std=gnu23 -O2 -g3 -ffreestanding -ffunction-sections -fdata-sections \
-          $(ARCH) -Wall -Wextra -Wno-pedantic -I. -I$(LIB) \
+          $(ARCH) -Wall -Wextra -Wno-pedantic -I. -I$(BOARD) -I$(NLIB) \
           -DSPI_XMIT_BUF=64 -D__REVISION__='0x$(REVISION)'
-LDFLAGS = -nostartfiles -lnosys $(ARCH) -T $(MEMTARGET).ld -Wl,-L,. -Wl,-L,$(LIB) \
+LDFLAGS = -nostartfiles -lnosys $(ARCH) -T $(BOARD)/$(MEMTARGET).ld -Wl,-L,. -Wl,-L,$(BOARD) \
           -Wl,--gc-sections,-Map,codetectinator.map
 
 CSRC = main.c ssd1306.c bme280.c bme280_comp.c ps1co.c battery.c history.c ui.c \
-       $(LIB)/gpio.c $(CLOCKSRC) $(LIB)/spi.c \
-       $(LIB)/console.c $(LIB)/fault.c $(LIB)/tprintf.c
+       $(NLIB)/gpio.c $(CLOCKSRC) $(NLIB)/spi.c \
+       $(NLIB)/console.c $(NLIB)/fault.c $(NLIB)/tprintf.c
 
-# generated: narray outputs + the selected board definition
-GEN = device.h pinmux.h devs.ld $(MEMTARGET).ld board.h
+# the lib files this project uses, as the union over both boards
+NLIB_C  = clock.c console.c fault.c gpio.c spi.c tprintf.c
+NLIB_H  = clock.h clock_l4.h console.h dma.h dma_g4.h dma_l4.h fault.h fifo.h \
+          gpio.h nvic.h serial.h spi.h startup.h tprintf.h usart_v2.h usart_v3.h
+NLIB_FILES = $(addprefix $(NLIB)/, $(NLIB_C) $(NLIB_H))
+
+# copied from the lib as well, but linker input, so it sits with the linker
+# scripts rather than among the C sources; the same layout serves both boards
+LIBLD = sections.ld
+
+# narray outputs, per board
+GEN = $(addprefix $(BOARD)/, device.h pinmux.h devs.ld $(MEMTARGET).ld)
 
 board.h: board_$(BOARD).h
 	cp $< $@
 
-$(NARRAY): $(wildcard ../../n-array/gen/*.go)
-	cd ../../n-array/gen && go build -o narray .
+# --- the only rules that reach NARRAY_DIR, and only when a file is gone ---
 
-device.h: $(NARRAY)
+$(NLIB_FILES) $(LIBLD):
+	@mkdir -p $(@D)
+	cp $(NARRAY_DIR)/lib/$(@F) $@
+
+# The generator is built in place in the checkout, on demand. It is
+# bootstrapped from INSIDE the recipes rather than named as their
+# prerequisite: make remakes a prerequisite even when the target is present
+# and up to date, order-only included, which would demand the checkout on
+# every build and hand back the dependency this arrangement removes.
+$(NARRAY): $(wildcard $(NARRAY_DIR)/gen/*.go)
+	cd $(NARRAY_DIR)/gen && go build -o narray .
+
+$(BOARD)/device.h:
+	@mkdir -p $(@D)
+	@$(MAKE) --no-print-directory $(NARRAY)
 	$(NARRAY) -part $(PART) -header $(PERIPH) > $@
 
-pinmux.h: $(NARRAY)
+$(BOARD)/pinmux.h:
+	@mkdir -p $(@D)
+	@$(MAKE) --no-print-directory $(NARRAY)
 	$(NARRAY) -pinmux $(PERIPH) > $@
 
-devs.ld: $(NARRAY)
+$(BOARD)/devs.ld:
+	@mkdir -p $(@D)
+	@$(MAKE) --no-print-directory $(NARRAY)
 	$(NARRAY) -part $(PART) -devs $(PERIPH) > $@
 
-$(MEMTARGET).ld: $(NARRAY)
+$(BOARD)/$(MEMTARGET).ld:
+	@mkdir -p $(@D)
+	@$(MAKE) --no-print-directory $(NARRAY)
 	$(NARRAY) -memory $(MEMTARGET) $(PERIPH) > $@
 
-codetectinator.elf: $(GEN) $(CSRC) $(LIB)/sections.ld
+# --------------------------------------------------------------------------
+
+codetectinator.elf: $(GEN) $(LIBLD) $(NLIB_FILES) board.h $(CSRC)
 	$(CC) $(CFLAGS) $(CSRC) $(LDFLAGS) -o $@
 	$(SIZE) $@
 
@@ -76,7 +133,8 @@ codetectinator.bin: codetectinator.elf
 .DEFAULT_GOAL := codetectinator.bin
 
 # regenerate the in-file pinout annotations from the datasheet
-pinfmt: $(NARRAY) pinmux.h
+pinfmt: $(BOARD)/pinmux.h
+	@$(MAKE) --no-print-directory $(NARRAY)
 	$(NARRAY) -part $(PARTFULL) -pinfmt main.c $(PERIPH)
 
 # Flash over ST-Link with OpenOCD (G4 flash is driven by the stm32l4x cmd set).
@@ -102,9 +160,15 @@ test: bme280_comp.c bme280_comp.h bme280_comp_test.c
 	./bme280_comp_test
 
 clean:
-	rm -f *.o *.elf *.bin *.hex *.map bme280_comp_test $(GEN)
+	rm -f *.o *.elf *.bin *.hex *.map bme280_comp_test board.h
 
-.PHONY: flash clean pinfmt test
+# the deliberate upgrade gesture: drop everything that came from n-array —
+# both boards' generated sets, not just the one currently selected
+n-array-clean:
+	rm -rf $(BOARDS)
+	rm -f $(LIBLD) $(NLIB_FILES)
+
+.PHONY: flash clean n-array-clean pinfmt test
 
 # a failed "narray ... > $@" must not leave a truncated target behind
 .DELETE_ON_ERROR:

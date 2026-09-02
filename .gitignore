@@ -1,8 +1,7 @@
-# narray-generated (make regenerates; board.h is the copied board selection)
-src/device.h
-src/pinmux.h
-src/devs.ld
-src/STM32*_ROM.ld
+# board.h is the copied board selection, remade by `make` from board_$(BOARD).h.
+# The narray-generated files (src/g431/, src/l432/) and the lib copies in
+# src/nlib/ are NOT ignored: they are the vendored [N]Array sources this repo
+# builds from, refreshed only by `make -C src n-array-clean`. See src/Makefile.
 src/board.h
 # build outputs
 src/*.o
