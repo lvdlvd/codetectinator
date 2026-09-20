@@ -9,6 +9,16 @@
 BOARD ?= l432
 BOARDS = g431 l432
 
+# PANEL=64 : 0.96" 128x64 SSD1306 (12-row small font, 42 px digits)
+# PANEL=32 : 0.91" 128x32 bar (5x7 font, 21 px digits)
+# The driver derives its init from the row count, ui.c its layout from the
+# font metrics font.h selects. One gcc invocation builds everything, and a
+# PANEL other than the last build's drops the elf right here at parse time
+# (a stamp prerequisite would race make's whole-second mtime comparison), so
+# switching PANEL needs no `make clean`.
+PANEL ?= 64
+$(shell test -e .panel-$(PANEL) || { rm -f .panel-* codetectinator.elf; touch .panel-$(PANEL); })
+
 ifeq ($(BOARD),g431)
 PART      = STM32G431
 PARTFULL  = STM32G431KBU6
@@ -63,7 +73,7 @@ SIZE    = $(PREFIX)size
 ARCH    = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
 CFLAGS  = -std=gnu23 -O2 -g3 -ffreestanding -ffunction-sections -fdata-sections \
           $(ARCH) -Wall -Wextra -Wno-pedantic -I. -I$(BOARD) -I$(NLIB) \
-          -DSPI_XMIT_BUF=64 -D__REVISION__='0x$(REVISION)'
+          -DSPI_XMIT_BUF=64 -DOLED_ROWS=$(PANEL) -D__REVISION__='0x$(REVISION)'
 LDFLAGS = -nostartfiles -lnosys $(ARCH) -T $(BOARD)/$(MEMTARGET).ld -Wl,-L,. -Wl,-L,$(BOARD) \
           -Wl,--gc-sections,-Map,codetectinator.map
 
@@ -121,6 +131,14 @@ $(BOARD)/$(MEMTARGET).ld:
 	@$(MAKE) --no-print-directory $(NARRAY)
 	$(NARRAY) -memory $(MEMTARGET) $(PERIPH) > $@
 
+# The 128x64 panel's small font is the public-domain X.Org 6x13, converted
+# from its BDF by bdf2h.go (one file, standard library only, run with `go
+# run`). Same policy as the n-array files: the output is tracked and only
+# regenerated when missing, which is the one gesture that reaches the network.
+FONT6X13_BDF = https://gitlab.freedesktop.org/xorg/font/misc-misc/-/raw/master/6x13.bdf
+font6x13.h:
+	curl -sfL $(FONT6X13_BDF) | go run bdf2h.go font6x13 0x20 0x7E 2 11 > $@
+
 # --------------------------------------------------------------------------
 
 codetectinator.elf: $(GEN) $(LIBLD) $(NLIB_FILES) board.h $(CSRC)
@@ -159,8 +177,16 @@ test: bme280_comp.c bme280_comp.h bme280_comp_test.c
 		-o bme280_comp_test bme280_comp.c bme280_comp_test.c
 	./bme280_comp_test
 
+# Host-side preview of the UI screens (fbtest.c), rendered as ASCII: the
+# real ui.c/ssd1306.c/history.c against a stub spi.h (hoststub/ shadows
+# nlib/ on the include path, so ssd1306.c compiles unchanged).
+fbtest: fbtest.c ui.c ssd1306.c history.c ssd1306.h ui.h history.h hoststub/spi.h
+	$(HOSTCC) -std=gnu23 -O2 -g -Wall -Wextra -Ihoststub -I. -DSPI_XMIT_BUF=64 -DOLED_ROWS=$(PANEL) \
+		-o fbtest fbtest.c ui.c ssd1306.c history.c
+	./fbtest
+
 clean:
-	rm -f *.o *.elf *.bin *.hex *.map bme280_comp_test board.h
+	rm -f *.o *.elf *.bin *.hex *.map bme280_comp_test fbtest board.h .panel-*
 
 # the deliberate upgrade gesture: drop everything that came from n-array —
 # both boards' generated sets, not just the one currently selected
@@ -168,7 +194,7 @@ n-array-clean:
 	rm -rf $(BOARDS)
 	rm -f $(LIBLD) $(NLIB_FILES)
 
-.PHONY: flash clean n-array-clean pinfmt test
+.PHONY: flash clean n-array-clean pinfmt test fbtest
 
 # a failed "narray ... > $@" must not leave a truncated target behind
 .DELETE_ON_ERROR:

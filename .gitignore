@@ -10,6 +10,9 @@ src/*.bin
 src/*.hex
 src/*.map
 src/bme280_comp_test
+src/fbtest
+src/fbtest.dSYM/
+src/.panel-*
 # pdftotext extracts (regenerable from the PDFs)
 doc/*.txt
 src/bme280_comp_test.dSYM/

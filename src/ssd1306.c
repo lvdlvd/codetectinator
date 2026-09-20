@@ -1,7 +1,5 @@
 #include "ssd1306.h"
 
-#include "font5x7.h"
-
 #include <string.h>
 
 // Send a command byte string via the cmd address (DC low).
@@ -128,19 +126,19 @@ void fb_invert_rect(struct SSD1306 *d, int x0, int y0, int x1, int y1) {
 }
 
 // glyph pixel with out-of-bounds = blank, for the Scale3x neighborhood
-static bool fpx(const uint8_t *g, int col, int row) {
-	return col >= 0 && col < 5 && row >= 0 && row < 7 && ((g[col] >> row) & 1);
+static bool fpx(const fontcol_t *g, int col, int row) {
+	return col >= 0 && col < BIG_COLS && row >= 0 && row < BIG_ROWS && ((g[col] >> row) & 1);
 }
 
 int fb_text_big(struct SSD1306 *d, int x, int y, const char *s) {
 	for (; *s; s++) {
 		unsigned ch = (unsigned char)*s;
-		if (ch < 0x20 || ch > 0x7E) {
-			ch = '?';
+		if (ch < BIG_FIRST || ch >= BIG_FIRST + BIG_N) {
+			ch = BIG_FALLBACK;
 		}
-		const uint8_t *g = font5x7[ch - 0x20];
-		for (int col = 0; col < 5; col++) {
-			for (int row = 0; row < 7; row++) {
+		const fontcol_t *g = font_bigbase[ch - BIG_FIRST];
+		for (int col = 0; col < BIG_COLS; col++) {
+			for (int row = 0; row < BIG_ROWS; row++) {
 				// Scale3x: expand E to a 3x3 block, pulling in diagonal
 				// neighbors to round corners (the classic pixel-art rule)
 				bool A = fpx(g, col - 1, row - 1), B = fpx(g, col, row - 1),
@@ -171,7 +169,7 @@ int fb_text_big(struct SSD1306 *d, int x, int y, const char *s) {
 				}
 			}
 		}
-		x += 18;
+		x += BIG_ADV;
 	}
 	return x;
 }
@@ -179,13 +177,13 @@ int fb_text_big(struct SSD1306 *d, int x, int y, const char *s) {
 int fb_text(struct SSD1306 *d, int x, int y, int scale, const char *s) {
 	for (; *s; s++) {
 		unsigned c = (unsigned char)*s;
-		if (c < 0x20 || c > 0x7E) {
-			c = '?';
+		if (c < FONT_FIRST || c >= FONT_FIRST + FONT_N) {
+			c = FONT_FALLBACK;
 		}
-		const uint8_t *glyph = font5x7[c - 0x20];
-		for (int col = 0; col < 5; col++) {
-			uint8_t bits = glyph[col];
-			for (int row = 0; row < 7; row++) {
+		const fontcol_t *glyph = font_small[c - FONT_FIRST];
+		for (int col = 0; col < FONT_COLS; col++) {
+			fontcol_t bits = glyph[col];
+			for (int row = 0; row < FONT_H; row++) {
 				if (!(bits & (1u << row))) {
 					continue;
 				}
@@ -196,7 +194,7 @@ int fb_text(struct SSD1306 *d, int x, int y, int scale, const char *s) {
 				}
 			}
 		}
-		x += 6 * scale;
+		x += FONT_ADV * scale;
 	}
 	return x;
 }

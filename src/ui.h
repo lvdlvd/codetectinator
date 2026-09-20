@@ -1,11 +1,12 @@
 #pragma once
 
-// Codetectinator UI for the 128x32 panel: one value at a time (P / T / H /
-// CO, boots on CO), digits as large as the widest value allows (Scale3x,
-// 21 px) with the unit at a third height at the lower right — the unit is
-// the tab indicator, there is no tab bar; a CO alarm screen that takes over
-// above 10/30/70 ppm; button = tab cycle (or wake when dimmed); timed
-// contrast decay and display-off.
+// Codetectinator UI: one value at a time (P / T / H / CO, boots on CO),
+// digits as large as the panel allows (Scale3x of font.h's big base: 21 px
+// on the 128x32 bar, 42 px on the 128x64) with the unit small at the lower
+// right — the unit is the tab indicator, there is no tab bar; a CO alarm
+// screen that takes over above 10/30/70 ppm; button = tab cycle (or wake
+// when dimmed), long press = graph; timed contrast decay and display-off.
+// The layout is written in font.h's metrics, so one ui.c serves both panels.
 
 #include "ssd1306.h"
 

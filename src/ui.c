@@ -36,9 +36,10 @@ static bool inverted; // alarm blink phase
 
 // per-tab presentation: display divider (history units per displayed
 // 0.1-unit; T stores two decimals but shows one) and the unit label drawn
-// small at the big value's lower right — on the 128x32 panel the unit IS the
-// tab indicator, there is no room (or need) for a tab bar. No BAT tab: the
-// battery surfaces only as the low-battery takeover.
+// small at the big value's lower right — the unit IS the tab indicator,
+// there is no tab bar (the 128x32 bar has no room for one, and the 128x64
+// spends its rows on taller digits instead). No BAT tab: the battery
+// surfaces only as the low-battery takeover.
 static const struct {
 	const char *unit;
 	int ch;    // history channel, for the long-press graph
@@ -86,15 +87,16 @@ char *ui_fmt1(char *buf, int v) {
 
 // ---- screens ---------------------------------------------------------------
 
-// One value fills the 128x32 panel: Scale3x digits (21 px), the unit at a
-// third of that (the 5x7 base font) baseline-aligned at the lower right, the
-// group centered. Optional header line above squeezes the digits to the
-// bottom (alarm screens); without one the digits center vertically.
+// One value fills the panel: Scale3x digits (BIG_H px), the unit in the
+// small font baseline-aligned at the lower right, the group centered.
+// Optional header line above squeezes the digits to the bottom (alarm
+// screens); without one the digits center vertically. All in font metrics,
+// so the 32-row panel gets 21 px digits at y 5/9, the 64-row 42 px at 11/18.
 static void render_value(const char *header, const char *val, const char *unit) {
-	int y = 5;
+	int y = (SSD1306_H - BIG_H) / 2;
 	if (header != NULL) {
 		fb_text(disp, (SSD1306_W - fb_text_width(1, header)) / 2, 0, 1, header);
-		y = 9;
+		y = SSD1306_H - BIG_H - SSD1306_H / 16;
 	}
 	int wv = fb_text_big_width(val), wu = fb_text_width(1, unit);
 	int x0 = (SSD1306_W - (wv + 3 + wu)) / 2;
@@ -102,7 +104,7 @@ static void render_value(const char *header, const char *val, const char *unit) 
 		x0 = 0;
 	}
 	int xe = fb_text_big(disp, x0, y, val);
-	fb_text(disp, xe + 3, y + 21 - 7, 1, unit);
+	fb_text(disp, xe + 3, y + BIG_H - FONT_BASE, 1, unit);
 }
 
 // Long-press graph, full screen: per-column min/max band of the last 15
@@ -119,7 +121,7 @@ static void render_graph(void) {
 	char buf[8];
 	int dv = tabs[tab].div;
 
-	fb_text(disp, 0, (SSD1306_H - 7) / 2, 1, tabs[tab].unit);
+	fb_text(disp, 0, (SSD1306_H - FONT_BASE) / 2, 1, tabs[tab].unit);
 
 	// y scale from the full-window min/max, padded; flat lines centered
 	int16_t wlo, whi;
@@ -155,7 +157,7 @@ static void render_graph(void) {
 	fb_vline(disp, G_X0 + 71, G_BOT + 1, G_BOT + 2);
 
 	fb_text(disp, 0, 0, 1, ui_fmt1(buf, whi / dv));
-	fb_text(disp, 0, G_BOT - 6, 1, ui_fmt1(buf, wlo / dv));
+	fb_text(disp, 0, G_BOT - (FONT_BASE - 1), 1, ui_fmt1(buf, wlo / dv)); // caps end on G_BOT
 }
 
 static void render_tab(void) {
@@ -173,7 +175,7 @@ static void render_tab(void) {
 		static const char msg[] = "BAT LO";
 		int w = fb_text_width(1, msg);
 		fb_text(disp, SSD1306_W - w - 1, 1, 1, msg);
-		fb_invert_rect(disp, SSD1306_W - w - 2, 0, SSD1306_W - 1, 8);
+		fb_invert_rect(disp, SSD1306_W - w - 2, 0, SSD1306_W - 1, FONT_BASE + 1);
 	}
 	render_value(lo ? "" : NULL, buf, tabs[tab].unit);
 }

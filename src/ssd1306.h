@@ -1,21 +1,26 @@
 #pragma once
 
-// SSD1306 128x64 OLED over the n-array SPI transaction queue (4-wire SPI:
-// SCK/MOSI/CS/DC, plus a reset GPIO owned by the board code). The driver is
-// board-independent: it addresses the display through two SPIQ slave-select
+// SSD1306 128x64 / 128x32 OLED over the n-array SPI transaction queue (4-wire
+// SPI: SCK/MOSI/CS/DC, plus a reset GPIO owned by the board code). The driver
+// is board-independent: it addresses the display through two SPIQ slave-select
 // addresses — one the board's ss hook decodes as "CS low, DC low" (commands),
 // one as "CS low, DC high" (data). All transfers are synchronous spiq_xmit;
 // keep the queue free of async traffic around calls into this driver.
 //
+// The panel height is the Makefile's PANEL (OLED_ROWS): init derives the
+// multiplex ratio and COM wiring from it, font.h the fonts, ui.c its layout.
+//
 // The framebuffer is in SSD1306 page layout: fb[page*128 + x], bit 0 the top
-// row of the page. Drawing primitives clip to the 128x64 canvas.
+// row of the page. Drawing primitives clip to the canvas.
 
 #include "spi.h"
 
 #include <stdbool.h>
 #include <stdint.h>
 
-enum { SSD1306_W = 128, SSD1306_H = 32 }; // H: 64 or 32; init derives mux + COM wiring
+enum { SSD1306_W = 128, SSD1306_H = OLED_ROWS };
+
+#include "font.h" // FONT_* / BIG_* metrics, for the text helpers and ui.c's layout
 
 struct SSD1306 {
 	struct SPIQ *q;
@@ -24,7 +29,7 @@ struct SSD1306 {
 	uint8_t fb[SSD1306_W * SSD1306_H / 8];
 };
 
-// Init sequence for a 128x64 panel with the internal charge pump. The caller
+// Init sequence for the panel with the internal charge pump. The caller
 // must have released the panel's reset line (high) at least 3 us before.
 void ssd1306_init(struct SSD1306 *d);
 
@@ -48,18 +53,19 @@ void fb_vline(struct SSD1306 *d, int x, int y0, int y1);
 void fb_hline(struct SSD1306 *d, int x0, int x1, int y);
 void fb_rect_fill(struct SSD1306 *d, int x0, int y0, int x1, int y1);
 void fb_invert_rect(struct SSD1306 *d, int x0, int y0, int x1, int y1);
-// 5x7 font scaled by an integer factor; returns the x after the last glyph.
+// Small font (FONT_H rows, cap height FONT_BASE, FONT_ADV advance) scaled by
+// an integer factor; y is the cell top. Returns the x after the last glyph.
 int fb_text(struct SSD1306 *d, int x, int y, int scale, const char *s);
 static inline int fb_text_width(int scale, const char *s) {
 	int n = 0;
 	while (s[n]) {
 		n++;
 	}
-	return n * 6 * scale;
+	return n * FONT_ADV * scale;
 }
 
-// Large text: the 5x7 font rendered through Scale3x pixel-art smoothing —
-// 15x21 px glyphs (18 px advance) with rounded corners instead of 3x blocks.
-// No font data beyond the 5x7 table. Returns the x after the last glyph.
+// Large text: the big base font rendered through Scale3x pixel-art smoothing —
+// BIG_H px tall glyphs (BIG_ADV advance) with rounded corners instead of 3x
+// blocks. Returns the x after the last glyph.
 int fb_text_big(struct SSD1306 *d, int x, int y, const char *s);
 static inline int fb_text_big_width(const char *s) { return fb_text_width(3, s); }

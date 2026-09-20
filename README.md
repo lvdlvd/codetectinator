@@ -97,34 +97,46 @@ fastest in-tolerance 16x rate at a 16 MHz kernel).
   UB-free over a generous calibration envelope and bit-identical to the
   datasheet inside the physical one. H4/H5 sign-extension reconciled
   against stm32f103_bme280
-- `ssd1306.c` — framebuffer + 5x7 font, big numbers via Scale3x
-  smoothing of the same font (15x21 glyphs, no extra font data),
-  contrast/dim/off, SPI shared with the BME280 through the SPIQ
-  ss-hook (CS+DC demux)
+- `ssd1306.c` — framebuffer + text in the fonts `font.h` selects for
+  the panel (`PANEL=64`: X.Org 6x13 small text, tall 5x14 digits;
+  `PANEL=32`: 5x7 for both), big numbers via Scale3x smoothing of the
+  digit base (15x42 resp. 15x21 glyphs), contrast/dim/off, SPI shared
+  with the BME280 through the SPIQ ss-hook (CS+DC demux). `make fbtest`
+  previews every UI screen on the host as ASCII, at either panel size
 - `battery.c` — single conversions on the board's VBAT channel (board.h),
   640.5-cycle sample time
 - `history.c` — 5 x 900-sample int16 rings, per-channel cadence (P/T/H/CO
   1 s, BAT 10 min; units 0.1 hPa / 0.01 C / 0.1 %RH / 0.1 ppm / 0.01 V)
-- `ui.c` — tabs, nonlinear-time graph, CO + battery alarm takeovers,
-  dim policy
+- `ui.c` — one-value screens, long-press nonlinear-time graph, CO +
+  battery alarm takeovers, dim policy; layout in font metrics so the
+  same code fills either panel
 
 ## UI
 
-Tabbed interface, five tabs: BAT / P / T / H / CO; boots on CO (the
-rightmost). Each tab shows the current value in large Scale3x digits
-with the unit small at its lower right, plus a sliding min/max graph
-on a nonlinear time scale — max and min flank the plot on the left,
-each in its half-height. P/T/H/CO graph the last 15 minutes (1 s
-samples); BAT samples every 10 minutes, so its ring spans ~6 days of
-discharge curve.
+One value at a time, P / T / H / CO, boots on CO. The value fills the
+panel in large Scale3x digits with the unit small at its lower right —
+the unit is the tab indicator, there is no tab bar. On the 128x64
+panel the digits are 42 px tall, on the 128x32 bar 21 px. BAT has no
+screen of its own: it surfaces as the low-battery takeover, and after
+that is acknowledged as a small inverted BAT LO badge top right.
 
-The pushbutton rotates through the tabs. If the display is dimmed or
-off, the first push only wakes it (no tab change).
+The pushbutton rotates through the values. Holding it shows the
+current value's sliding min/max graph until release: the last 15
+minutes (1 s samples) on a nonlinear time scale, window max on top
+and min at the bottom of the label column left of the plot, ticks
+under the plot at 15 / 5 / 1 minutes. BAT samples every 10 minutes,
+so its ring spans ~6 days of discharge curve (history only). If the
+display is dimmed or off, the first push only wakes it.
+
+The panel size is a build switch, `make PANEL=64` (default) or
+`PANEL=32`: the driver derives its init from it and `font.h` — the one
+`#if` in the firmware — picks the fonts; ui.c lays out in their
+metrics, so no `make clean` is needed when switching.
 
 CO alarm: above 10 / 30 / 70 ppm a separate alarm display takes over
-(full contrast + 2 Hz invert blink, overrides dimming and tabs),
-showing the current level and which threshold is exceeded; releases
-with 0.5 ppm hysteresis. Battery alarm: below 6.5 V (with a battery
+(full contrast + 2 Hz invert blink, overrides dimming and the button),
+the exceeded threshold as a header line over the current level;
+releases with 0.5 ppm hysteresis. Battery alarm: below 6.5 V (with a battery
 attached, i.e. above the 4.5 V sense floor) a calmer takeover — no
 blink — which the button acknowledges; CO always outranks it.
 
