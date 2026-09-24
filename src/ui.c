@@ -48,7 +48,7 @@ static const struct {
 	bool nonneg; // clip the graph floor at 0 (ppm: a negative axis is nonsense)
 } tabs[] = {
     {"hPa", HIST_P, 1, 10, false},
-    {"\'C", HIST_T, 10, 100, false}, // 5x7 has no degree sign; ' reads well enough
+    {"'C", HIST_T, 10, 100, false}, // ' renders as the degree sign (font.h)
     {"%RH", HIST_H, 1, 10, false},
     {"ppm", HIST_CO, 1, 10, true}, // last: the startup tab; 0.0..1.0 when flat at 0
 };

@@ -2,7 +2,9 @@
 
 // Classic 5x7 column-major font, ASCII 0x20..0x7E. Each glyph is 5 column
 // bytes, bit 0 = top row; renderers add a 1-column gap. Public-domain table
-// as shipped with countless GLCD libraries.
+// as shipped with countless GLCD libraries, except that the apostrophe slot
+// holds a degree sign (a 3x3 ring at the cap top): this app prints "'C" and
+// never an apostrophe. The 6x13 table patches the same slot.
 
 #include <stdint.h>
 
@@ -14,7 +16,7 @@ static const uint8_t font5x7[95][5] = {
     {0x24, 0x2A, 0x7F, 0x2A, 0x12}, // '$'
     {0x23, 0x13, 0x08, 0x64, 0x62}, // '%'
     {0x36, 0x49, 0x55, 0x22, 0x50}, // '&'
-    {0x00, 0x05, 0x03, 0x00, 0x00}, // '\''
+    {0x00, 0x02, 0x05, 0x02, 0x00}, // '\'' = degree sign, see above
     {0x00, 0x1C, 0x22, 0x41, 0x00}, // '('
     {0x00, 0x41, 0x22, 0x1C, 0x00}, // ')'
     {0x08, 0x2A, 0x1C, 0x2A, 0x08}, // '*'

@@ -133,11 +133,12 @@ $(BOARD)/$(MEMTARGET).ld:
 
 # The 128x64 panel's small font is the public-domain X.Org 6x13, converted
 # from its BDF by bdf2h.go (one file, standard library only, run with `go
-# run`). Same policy as the n-array files: the output is tracked and only
-# regenerated when missing, which is the one gesture that reaches the network.
+# run`), with the Latin-1 degree sign patched over the apostrophe (see font.h).
+# Same policy as the n-array files: the output is tracked and only regenerated
+# when missing, which is the one gesture that reaches the network.
 FONT6X13_BDF = https://gitlab.freedesktop.org/xorg/font/misc-misc/-/raw/master/6x13.bdf
 font6x13.h:
-	curl -sfL $(FONT6X13_BDF) | go run bdf2h.go font6x13 0x20 0x7E 2 11 > $@
+	curl -sfL $(FONT6X13_BDF) | go run bdf2h.go font6x13 0x20 0x7E 2 11 0x27=0xB0 > $@
 
 # --------------------------------------------------------------------------
 

@@ -13,6 +13,8 @@
 // columns per glyph, and the renderer advances FONT_ADV per small glyph
 // (5x7 stores 5 columns and gets a 1-column gap; 6x13 stores its 6-wide
 // cell, gap included). Out-of-range characters render as the fallback.
+// In both small fonts the apostrophe slot holds a degree sign: the T unit
+// prints as "'C", and nothing in this app prints an apostrophe.
 // OLED_ROWS comes from the Makefile (PANEL=64|32), as does SSD1306_H.
 
 #include <stdint.h>
