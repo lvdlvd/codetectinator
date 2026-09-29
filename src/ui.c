@@ -13,10 +13,13 @@ enum { // ms of inactivity
 };
 enum PowerState { PWR_BRIGHT, PWR_DIM, PWR_OFF };
 
-// CO alarm thresholds in 0.1 ppm, with release hysteresis of 0.5 ppm so a
-// reading hovering on a threshold does not flap the alarm screen.
+// CO alarm thresholds in 0.1 ppm, with a +-0.1 ppm dead band: a tier trips
+// at >= 10.1 ppm and releases at <= 9.9, so a reading sitting exactly on the
+// threshold does not flap the alarm screen. Wider (it was 0.5 ppm) kept the
+// alarm up for the long slow tail of an exposure — half an hour with the
+// window open after a tunnel — while the reading was already down at 9.x.
 static const int16_t co_thresh[3] = {100, 300, 700};
-enum { CO_HYST = 5 };
+enum { CO_HYST = 1 };
 
 // Battery alarm: below 6.5 V the 9V block is near the buck's dropout; only
 // meaningful with a real battery attached — under 4.5 V the divider is
@@ -58,7 +61,10 @@ enum { NTABS = sizeof tabs / sizeof tabs[0] };
 // tab, holding longer shows the graph until release. rotate_armed remembers
 // whether the press landed on a live value screen — a press that merely woke
 // a dimmed panel or acked an alarm must do nothing further on release.
-static bool btn_down, rotate_armed, graphing;
+// graph_armed is the same plus the CO alarm screen: a long press there
+// switches to the CO tab and graphs it (still blinking), so a long exposure
+// can be watched; a short press on the alarm still does nothing.
+static bool btn_down, rotate_armed, graph_armed, graphing;
 static uint32_t btn_down_ms;
 
 int ui_alarm_level(void) { return alarm; }
@@ -234,6 +240,7 @@ void ui_button(uint32_t now_ms, bool down) {
 		btn_down = true;
 		btn_down_ms = now_ms;
 		rotate_armed = pwr == PWR_BRIGHT && alarm == 0 && !(bat_alarm && !bat_ack);
+		graph_armed = rotate_armed || alarm > 0;
 		if (alarm == 0 && bat_alarm && !bat_ack) {
 			bat_ack = true; // acknowledge the battery takeover, back to the tabs
 		} // else on a dimmed/off display the press only wakes it
@@ -252,26 +259,30 @@ void ui_button(uint32_t now_ms, bool down) {
 
 void ui_tick(uint32_t now_ms) {
 	// a held button counts as activity and, past the long-press threshold on
-	// a live value screen, brings up the graph
+	// a live value or CO alarm screen, brings up the graph
 	if (btn_down) {
 		last_activity_ms = now_ms;
-		if (rotate_armed && !graphing && now_ms - btn_down_ms >= LONG_PRESS_MS) {
+		if (graph_armed && !graphing && now_ms - btn_down_ms >= LONG_PRESS_MS) {
 			graphing = true;
+			if (alarm > 0) {
+				tab = NTABS - 1; // CO: the graph the alarm is about
+			}
 			last_render_ms = 0;
 		}
 	}
 
-	// alarm level with hysteresis on release
+	// alarm level: trip above threshold + dead band, hold until below minus it
 	int lvl = 0;
 	if (cur.co != HIST_NONE) {
 		for (int i = 0; i < 3; i++) {
-			if (cur.co >= co_thresh[i] || (alarm > i && cur.co >= co_thresh[i] - CO_HYST)) {
+			if (cur.co >= co_thresh[i] + CO_HYST || (alarm > i && cur.co > co_thresh[i] - CO_HYST)) {
 				lvl = i + 1;
 			}
 		}
 	}
 	if (lvl > 0 && alarm == 0) {
 		set_power(PWR_BRIGHT); // alarm overrides dimming, not a button: no tab change
+		graphing = false;      // but it does end a held graph: the onset must be seen
 	}
 	if (lvl == 0 && alarm > 0) {
 		ssd1306_invert(disp, inverted = false);
@@ -319,12 +330,12 @@ void ui_tick(uint32_t now_ms) {
 	last_render_ms = now_ms;
 
 	fb_clear(disp);
-	if (alarm > 0) {
+	if (graphing) {
+		render_graph(); // during an alarm only reachable on the CO tab, see above
+	} else if (alarm > 0) {
 		render_alarm();
 	} else if (bat_takeover) {
 		render_alarm_bat();
-	} else if (graphing) {
-		render_graph();
 	} else {
 		render_tab();
 	}

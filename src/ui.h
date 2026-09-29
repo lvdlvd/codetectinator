@@ -5,7 +5,8 @@
 // on the 128x32 bar, 42 px on the 128x64) with the unit small at the lower
 // right — the unit is the tab indicator, there is no tab bar; a CO alarm
 // screen that takes over above 10/30/70 ppm; button = tab cycle (or wake
-// when dimmed), long press = graph; timed contrast decay and display-off.
+// when dimmed), long press = graph (the CO graph during an alarm); timed
+// contrast decay and display-off.
 // The layout is written in font.h's metrics, so one ui.c serves both panels.
 
 #include "ssd1306.h"

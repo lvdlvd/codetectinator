@@ -134,9 +134,10 @@ The panel size is a build switch, `make PANEL=64` (default) or
 metrics, so no `make clean` is needed when switching.
 
 CO alarm: above 10 / 30 / 70 ppm a separate alarm display takes over
-(full contrast + 2 Hz invert blink, overrides dimming and the button),
-the exceeded threshold as a header line over the current level;
-releases with 0.5 ppm hysteresis. Battery alarm: below 6.5 V (with a battery
+(full contrast + 2 Hz invert blink, overrides dimming and short presses),
+the exceeded threshold as a header line over the current level; a long
+press still shows the CO graph, blinking, until release. Trips at
+threshold + 0.1 ppm, releases at threshold - 0.1 ppm. Battery alarm: below 6.5 V (with a battery
 attached, i.e. above the 4.5 V sense floor) a calmer takeover — no
 blink — which the button acknowledges; CO always outranks it.
 

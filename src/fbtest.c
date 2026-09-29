@@ -69,7 +69,16 @@ int main(void) {
 	ui_second(&v);
 	tick(300);
 	dump("CO alarm");
-	v.co = 95;
+	ui_button(now, true); // long press during the alarm: CO graph, from the H tab
+	tick(500);
+	dump("CO graph during the alarm (long press)");
+	ui_button(now, false);
+	tick(1);
+	v.co = 100; // inside the dead band: the alarm holds until <= 9.9
+	ui_second(&v);
+	tick(300);
+	dump("CO alarm held at 10.0 ppm");
+	v.co = 99;
 	ui_second(&v);
 	tick(300);
 
@@ -78,6 +87,6 @@ int main(void) {
 	tick(300);
 	dump("low battery takeover");
 	press(); // acknowledge
-	dump("H tab with BAT LO badge");
+	dump("CO tab with BAT LO badge (the alarm long press left it on CO)");
 	return 0;
 }
